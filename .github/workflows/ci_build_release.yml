@@ -204,39 +204,174 @@ jobs:
         with:
           from-file: ${{ env.SOLUTION_REL_DIR }}/target_info.yaml
 
-      # Export targets information
+      # # Export targets information
+      # - name: Update env vars with Project SLCP extracted data
+      #   run: |
+      #     echo "TARGET_OPN=${{ (fromJson(steps.read_build_configs.outputs.data).targets[0]).target_opn }}" >> $GITHUB_ENV
+      #     echo "TARGET_CONFIGS=${{ (fromJson(steps.read_build_configs.outputs.data).targets[0]).configs }}" >> $GITHUB_ENV
+
+      # Export targets information (supports empty target_info.yaml)
       - name: Update env vars with Project SLCP extracted data
+        id: export_targets
+        shell: bash
         run: |
-          echo "TARGET_OPN=${{ (fromJson(steps.read_build_configs.outputs.data).targets[0]).target_opn }}" >> $GITHUB_ENV
-          echo "TARGET_CONFIGS=${{ (fromJson(steps.read_build_configs.outputs.data).targets[0]).configs }}" >> $GITHUB_ENV
-        
-      # Generate Project for CI build - TODO change target board for matrix builds based on configuration file
-      - name: SLC Generate Project for local build
-        run: |
-          cd ${{ env.SOLUTION_ABS_DIR }}
-          slc generate ${{ env.SLCP_FILENAME }} -cpsdk -tlcn gcc -o cmake --with ${{ env.TARGET_OPN }} --configuration=${{ env.TARGET_CONFIGS }}
+          set -euo pipefail
 
-      # Build Project
-      - name: Build Project
-        run: |
-          cd ${{ env.CMAKE_WORKING_ABS_DIR }}
-          cmake --workflow --preset project --fresh
+          # Read the JSON produced earlier by your 'read_build_configs' step.
+          # Expecting shape: { "targets": [ { "target_opn": "...", "configs": "...", "name": "..." }, ... ] }
+          RAW='${{ steps.read_build_configs.outputs.data }}'
 
-      # Create size report
-      - name: Create size report
+          # If the config step produced nothing or empty, fall back to empty list
+          if [ -z "$RAW" ] || [ "$RAW" = "null" ]; then
+            echo "No targets JSON. Proceeding with default-only build."
+            echo "TARGET_COUNT=0" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          python3 - << 'PY'
+          import json, os, re
+          raw = json.loads(r'''${{ steps.read_build_configs.outputs.data }}''')
+          targets = (raw.get("targets") or []) if isinstance(raw, dict) else []
+          # sanitize names for folder usage
+          def slug(s):
+              s = (s or "t").strip()
+              s = re.sub(r'[^A-Za-z0-9._-]+','_', s)
+              return s or "t"
+          print(f"Found {len(targets)} targets")
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write(f"TARGET_COUNT={len(targets)}\n")
+              for i,t in enumerate(targets):
+                  name = slug(t.get("name") or t.get("target_opn") or f"t{i}")
+                  opn  = (t.get("target_opn") or "").strip()
+                  cfg  = (t.get("configs") or "").strip()
+                  f.write(f"TARGET_{i}_NAME={name}\n")
+                  f.write(f"TARGET_{i}_OPN={opn}\n")
+                  f.write(f"TARGET_{i}_CONFIGS={cfg}\n")
+          PY
+
+
+      # # Generate Project for CI build - TODO change target board for matrix builds based on configuration file
+      # - name: SLC Generate Project for local build
+      #   run: |
+      #     cd ${{ env.SOLUTION_ABS_DIR }}
+      #     slc generate ${{ env.SLCP_FILENAME }} -cpsdk -tlcn gcc -o cmake --with ${{ env.TARGET_OPN }} --configuration=${{ env.TARGET_CONFIGS }}
+
+      # Generate projects:
+      # - default (NO --with / --configuration) → ${PROJECT_NAME}_default
+      # - each target in target_info.yaml      → ${PROJECT_NAME}_${TARGET_<i>_NAME}
+      - name: SLC Generate Project(s)
+        shell: bash
         run: |
-          arm-none-eabi-size ${{ env.BINARIES_OUTPUT_ABS_DIR }}/${{ env.PROJECT_NAME }}.out -A >> ${{ env.PROJECT_NAME }}_SizeReport.log
+          set -euo pipefail
+
+          : "${PROJECT_NAME:?PROJECT_NAME must be set}"
+          : "${{ env.SOLUTION_ABS_DIR }}"; : "${{ env.SLCP_FILENAME }}"
+
+          # Paths
+          ROOT="$GITHUB_WORKSPACE"
+          SOL_DIR="${{ env.SOLUTION_ABS_DIR }}"
+          SLCP="${{ env.SLCP_FILENAME }}"
+
+          # 1) Default project (no --with / --configuration)
+          DEF_DIR="${PROJECT_NAME}_default"
+          echo "Generating DEFAULT into: ${DEF_DIR}"
+          mkdir -p "${ROOT}/${DEF_DIR}"
+          pushd "${SOL_DIR}" >/dev/null
+            slc generate "${SLCP}" -cpsdk -tlcn gcc -o cmake -d "${ROOT}/${DEF_DIR}"
+          popd >/dev/null
+
+          # 2) Extra targets from target_info.yaml (if any)
+          CNT="${TARGET_COUNT:-0}"
+          if [ "$CNT" -gt 0 ]; then
+            for ((i=0;i<CNT;i++)); do
+              name_var="TARGET_${i}_NAME"
+              opn_var="TARGET_${i}_OPN"
+              cfg_var="TARGET_${i}_CONFIGS"
+
+              NAME="${!name_var}"
+              OPN="${!opn_var}"
+              CFG="${!cfg_var}"
+
+              OUT_DIR="${PROJECT_NAME}_${NAME}"
+              echo "Generating TARGET ${i}: name=${NAME} opn=${OPN} cfg=${CFG} → ${OUT_DIR}"
+              mkdir -p "${ROOT}/${OUT_DIR}"
+              pushd "${SOL_DIR}" >/dev/null
+                slc generate "${SLCP}" -cpsdk -tlcn gcc -o cmake \
+                  --with "${OPN}" \
+                  --configuration="${CFG}" \
+                  -d "${ROOT}/${OUT_DIR}"
+              popd >/dev/null
+            done
+          else
+            echo "No extra targets. Only default will be built."
+          fi
+
+
+      # # Build Project
+      # - name: Build Project
+      #   run: |
+      #     cd ${{ env.CMAKE_WORKING_ABS_DIR }}
+      #     cmake --workflow --preset project --fresh
+
+      - name: Build all generated projects
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${PROJECT_NAME:?PROJECT_NAME must be set}"
+
+          # Build every ${PROJECT_NAME}_* folder
+          shopt -s nullglob
+          for PROJ in "${PROJECT_NAME}"_*; do
+            [ -d "$PROJ" ] || continue
+            echo "=== Building $PROJ ==="
+            pushd "$PROJ" >/dev/null
+              # project preset is created by 'slc generate -o cmake'
+              cmake --workflow --preset project --fresh
+            popd >/dev/null
+          done
+
+
+      # # Create size report
+      # - name: Create size report
+      #   run: |
+      #     arm-none-eabi-size ${{ env.BINARIES_OUTPUT_ABS_DIR }}/${{ env.PROJECT_NAME }}.out -A >> ${{ env.PROJECT_NAME }}_SizeReport.log
+
+      - name: Create size logs for all projects
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${PROJECT_NAME:?PROJECT_NAME must be set}"
+
+          mkdir -p size_logs
+          shopt -s nullglob
+          found_any=0
+
+          for PROJ in "${PROJECT_NAME}"_*; do
+            [ -d "$PROJ" ] || continue
+            # try to find one (or more) .elf under the project directory
+            mapfile -t ELFS < <(find "$PROJ" -type f -name '*.elf' -maxdepth 4 2>/dev/null || true)
+            if [ "${#ELFS[@]}" -eq 0 ]; then
+              echo "No .elf found for $PROJ (build may place artifacts elsewhere)."
+              continue
+            fi
+            for elf in "${ELFS[@]}"; do
+              base="$(basename "$elf" .elf)"
+              log="size_logs/${PROJ}__${base}.txt"
+              echo "Size for $elf → $log"
+              arm-none-eabi-size "$elf" | tee "$log"
+              found_any=1
+            done
+          done
+
+          if [ "$found_any" -eq 0 ]; then
+            echo "Warning: no .elf files found to size."
+          fi
 
       # Add slpb artifacts to Release - If applicable, I do not like using artifact and would have preferred using the paths from slpb instead
       - name: Looking for postbuild artifacts and zipping them if present 
         if: ${{ hashFiles(format('{0}/{1}.slpb', env.SOLUTION_ABS_DIR, env.PROJECT_NAME)) != '' }}
         run: |
           zip -q -r ${{ env.POST_BUILD_ARTIFACTS_ABS_OUT_FILE }} ${{ env.POST_BUILD_ARTIFACTS_ABS_DIR }}
-
-  # build_artifacts:
-  #   needs: download_optional_tools
-  #   runs-on: ubuntu-latest
-  #   steps:
 
       - name: Create Release Draft
         uses: release-drafter/release-drafter@v6
