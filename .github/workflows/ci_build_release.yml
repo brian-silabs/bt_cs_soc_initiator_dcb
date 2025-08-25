@@ -115,6 +115,26 @@ jobs:
           echo "BINARIES_OUTPUT_ABS_DIR=${{ env.SOLUTION_ABS_DIR }}/${{ fromJson(steps.read_slcp.outputs.data).project_name }}_cmake/build/default_config" >> $GITHUB_ENV
           echo "ARM_GCC_VERSION=${{ fromJson(steps.read_toolchain.outputs.data)[format('{0}', (fromJson(steps.read_slcp.outputs.data).sdk).id )][format('v{0}', (fromJson(steps.read_slcp.outputs.data).sdk).version )].gcc }}" >> $GITHUB_ENV
 
+      - name: Detect ZAP config
+        id: zap
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(config/zcl/*.zap)
+          if [ ${#files[@]} -gt 0 ]; then
+            # pick the first .zap; tweak if you prefer newest: files=( $(ls -t config/zcl/*.zap) )
+            ZAP_FILE="${files[0]}"
+            echo "found=true"        >> "$GITHUB_OUTPUT"
+            echo "zap_file=$ZAP_FILE" >> "$GITHUB_OUTPUT"
+            # a stable cache key: hash the zap file content
+            echo "zap_hash=$(sha256sum "$ZAP_FILE" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+            echo "Found ZAP: $ZAP_FILE"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No ZAP file under config/zcl/. Will skip ZAP download/build."
+          fi
+
       # Download Simplicity SDK
       - name: Checkout SiSDK 
         uses: actions/checkout@v4
@@ -312,22 +332,22 @@ jobs:
       #   run: |
       #     cd ${{ env.CMAKE_WORKING_ABS_DIR }}
       #     cmake --workflow --preset project --fresh
-
       - name: Build all generated projects
         shell: bash
         run: |
           set -euo pipefail
           : "${PROJECT_NAME:?PROJECT_NAME must be set}"
 
-          # Build every ${PROJECT_NAME}_* folder
-          shopt -s nullglob
           for PROJ in "${PROJECT_NAME}"_*; do
             [ -d "$PROJ" ] || continue
             echo "=== Building $PROJ ==="
-            pushd "$PROJ" >/dev/null
-              # project preset is created by 'slc generate -o cmake'
-              cmake --workflow --preset project --fresh
-            popd >/dev/null
+            if [ ! -f "$PROJ/CMakePresets.json" ]; then
+              echo "::error::Expected $PROJ/CMakePresets.json not found in $PROJ"
+              exit 1
+            fi
+            cd "$PROJ"
+            cmake --workflow --preset project --fresh
+            cd ..
           done
 
 
