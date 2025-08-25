@@ -1,2 +1,16 @@
-GNU\ ARM\ v12.2.1\ \-\ Default/
+# All IDEs 
 !.gitmodules
+
+# Simplicity IDE Gitignore
+
+GNU ARM v12.2.1 - Debug/
+GNU ARM v12.2.1 - Default/
+
+# Vscode Project Gitignore
+
+#IAR Project Gitignore
+settings/
+Default/
+ewarm-IAR
+
+# Any other pattern goes here
