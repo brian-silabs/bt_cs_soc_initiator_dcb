@@ -184,7 +184,8 @@ jobs:
         id: zap_latest  # The step ID to refer to later.
 
       # Download ZAP Tool for Zigbee projects
-      - name: Checkout ZAP Tool 
+      - name: Checkout ZAP Tool
+        if: steps.zap.outputs.found == 'true'
         uses: actions/checkout@v4
         with:
           repository: project-chip/zap
@@ -194,6 +195,7 @@ jobs:
 
       # Build ZAP
       - name: Setup Node # Not sure if this is required
+        if: steps.zap.outputs.found == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: "18"
@@ -202,6 +204,7 @@ jobs:
 
       # Install ZAP - TODO check certificate issue
       - name: Build and install ZAP (Unsecure NODE_TLS_REJECT_UNAUTHORIZED = 0)
+        if: steps.zap.outputs.found == 'true'
         working-directory: ${{ env.ZAP_REL_DIR }}
         env:
           NODE_TLS_REJECT_UNAUTHORIZED: 0
@@ -279,7 +282,7 @@ jobs:
       # Generate projects:
       # - default (NO --with / --configuration) → ${PROJECT_NAME}_default
       # - each target in target_info.yaml      → ${PROJECT_NAME}_${TARGET_<i>_NAME}
-      - name: SLC Generate Project(s)
+      - name: SLC Generate & Build Project(s)
         shell: bash
         run: |
           set -euo pipefail
@@ -287,17 +290,19 @@ jobs:
           : "${PROJECT_NAME:?PROJECT_NAME must be set}"
           : "${{ env.SOLUTION_ABS_DIR }}"; : "${{ env.SLCP_FILENAME }}"
 
-          # Paths
-          ROOT="$GITHUB_WORKSPACE"
-          SOL_DIR="${{ env.SOLUTION_ABS_DIR }}"
+          SOL_ABS_DIR="${{ env.SOLUTION_ABS_DIR }}"
           SLCP="${{ env.SLCP_FILENAME }}"
 
           # 1) Default project (no --with / --configuration)
-          DEF_DIR="${PROJECT_NAME}_default"
-          echo "Generating DEFAULT into: ${DEF_DIR}"
-          mkdir -p "${ROOT}/${DEF_DIR}"
-          pushd "${SOL_DIR}" >/dev/null
-            slc generate "${SLCP}" -cpsdk -tlcn gcc -o cmake -d "${ROOT}/${DEF_DIR}"
+          DEFAULT_PROJECT_ABS_DIR="${SOL_ABS_DIR}/${PROJECT_NAME}_default"
+          echo "Generating DEFAULT build config into: ${DEFAULT_PROJECT_ABS_DIR}"
+          mkdir -p "${DEFAULT_PROJECT_ABS_DIR}"
+          pushd "${SOL_ABS_DIR}" >/dev/null
+            slc generate "${SLCP}" -cpsdk -tlcn gcc -o cmake -d "${DEFAULT_PROJECT_ABS_DIR}"
+            echo "=== Building ${PROJECT_NAME}_default ==="
+            pushd "${DEFAULT_PROJECT_ABS_DIR}" >/dev/null
+              cmake --workflow --preset project --fresh
+            popd >/dev/null
           popd >/dev/null
 
           # 2) Extra targets from target_info.yaml (if any)
@@ -308,18 +313,29 @@ jobs:
               opn_var="TARGET_${i}_OPN"
               cfg_var="TARGET_${i}_CONFIGS"
 
-              NAME="${!name_var}"
-              OPN="${!opn_var}"
-              CFG="${!cfg_var}"
+              NAME="${!name_var-}"   # may be empty
+              OPN="${!opn_var-}"     # may be empty
+              CFG="${!cfg_var-}"     # may be empty
 
-              OUT_DIR="${PROJECT_NAME}_${NAME}"
-              echo "Generating TARGET ${i}: name=${NAME} opn=${OPN} cfg=${CFG} → ${OUT_DIR}"
-              mkdir -p "${ROOT}/${OUT_DIR}"
-              pushd "${SOL_DIR}" >/dev/null
-                slc generate "${SLCP}" -cpsdk -tlcn gcc -o cmake \
-                  --with "${OPN}" \
-                  --configuration="${CFG}" \
-                  -d "${ROOT}/${OUT_DIR}"
+              PROJECT_CONFIG_ABS_OUT_DIR="${SOL_ABS_DIR}/${PROJECT_NAME}_${NAME}"
+              echo "Generating TARGET ${i}: name=${NAME:-<none>} opn=${OPN:-<none>} cfg=${CFG:-<none>} → ${PROJECT_CONFIG_ABS_OUT_DIR}"
+              mkdir -p "${PROJECT_CONFIG_ABS_OUT_DIR}"
+
+              # Build slc args conditionally so we don't pass empty flags
+              SLC_ARGS=( generate "${SLCP}" -cpsdk -tlcn gcc -o cmake -d "${PROJECT_CONFIG_ABS_OUT_DIR}" )
+              if [ -n "${OPN}" ]; then
+                SLC_ARGS+=( --with "${OPN}" )
+              fi
+              if [ -n "${CFG}" ]; then
+                SLC_ARGS+=( --configuration "${CFG}" )
+              fi
+
+              pushd "${SOL_ABS_DIR}" >/dev/null
+                slc "${SLC_ARGS[@]}"
+                echo "=== Building ${PROJECT_NAME}_${NAME} ==="
+                pushd "${PROJECT_CONFIG_ABS_OUT_DIR}" >/dev/null
+                  cmake --workflow --preset project --fresh
+                popd >/dev/null
               popd >/dev/null
             done
           else
