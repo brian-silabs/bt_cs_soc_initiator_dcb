@@ -37,10 +37,12 @@ jobs:
           echo "SLC_CLI_ABS_DIR=${{ env.TOOLS_ABS_DIR }}/slc_cli" >> $GITHUB_ENV
           echo "COMMANDER_REL_DIR=${{ env.TOOLS_REL_DIR }}/commander" >> $GITHUB_ENV
           echo "COMMANDER_ABS_DIR=${{ env.TOOLS_ABS_DIR }}/commander" >> $GITHUB_ENV
-          echo "POST_BUILD_ARTIFACTS_REL_OUT_FILE=${{ env.SOLUTION_REL_DIR }}/postbuild-artifacts.zip" >> $GITHUB_ENV
-          echo "POST_BUILD_ARTIFACTS_ABS_OUT_FILE=${{ env.SOLUTION_ABS_DIR }}/postbuild-artifacts.zip" >> $GITHUB_ENV
-          echo "POST_BUILD_ARTIFACTS_REL_DIR=${{ env.SOLUTION_REL_DIR }}/artifact" >> $GITHUB_ENV
-          echo "POST_BUILD_ARTIFACTS_ABS_DIR=${{ env.SOLUTION_ABS_DIR }}/artifact" >> $GITHUB_ENV
+          echo "POST_BUILD_EXE=${{ env.TOOLS_ABS_DIR }}/commander/commander" >> $GITHUB_ENV
+          # TODO review below, as we will now upload zipped artifacts, per config
+          # echo "POST_BUILD_ARTIFACTS_REL_OUT_FILE=${{ env.SOLUTION_REL_DIR }}/postbuild-artifacts.zip" >> $GITHUB_ENV
+          # echo "POST_BUILD_ARTIFACTS_ABS_OUT_FILE=${{ env.SOLUTION_ABS_DIR }}/postbuild-artifacts.zip" >> $GITHUB_ENV
+          echo "POST_BUILD_ARTIFACTS_REL_DIR=${{ env.SOLUTION_REL_DIR }}/artifacts" >> $GITHUB_ENV
+          echo "POST_BUILD_ARTIFACTS_ABS_DIR=${{ env.SOLUTION_ABS_DIR }}/artifacts" >> $GITHUB_ENV
 
       - name: Export all tools to PATH
         run: |
@@ -112,7 +114,7 @@ jobs:
           echo "SDK_VERSION=${{ (fromJson(steps.read_slcp.outputs.data).sdk).version }}" >> $GITHUB_ENV
           echo "PROJECT_NAME=${{ fromJson(steps.read_slcp.outputs.data).project_name }}" >> $GITHUB_ENV
           echo "CMAKE_WORKING_ABS_DIR=${{ env.SOLUTION_ABS_DIR }}/${{ fromJson(steps.read_slcp.outputs.data).project_name }}_cmake" >> $GITHUB_ENV
-          echo "BINARIES_OUTPUT_ABS_DIR=${{ env.SOLUTION_ABS_DIR }}/${{ fromJson(steps.read_slcp.outputs.data).project_name }}_cmake/build/default_config" >> $GITHUB_ENV
+          #echo "BINARIES_OUTPUT_ABS_DIR=${{ env.SOLUTION_ABS_DIR }}/${{ fromJson(steps.read_slcp.outputs.data).project_name }}_cmake/build/default_config" >> $GITHUB_ENV
           echo "ARM_GCC_VERSION=${{ fromJson(steps.read_toolchain.outputs.data)[format('{0}', (fromJson(steps.read_slcp.outputs.data).sdk).id )][format('v{0}', (fromJson(steps.read_slcp.outputs.data).sdk).version )].gcc }}" >> $GITHUB_ENV
 
       - name: Detect ZAP config
@@ -285,23 +287,36 @@ jobs:
       - name: SLC Generate & Build Project(s)
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
+          trap 'echo "❌ Failed at ${BASH_SOURCE[0]}:${LINENO}"' ERR
 
           : "${PROJECT_NAME:?PROJECT_NAME must be set}"
           : "${{ env.SOLUTION_ABS_DIR }}"; : "${{ env.SLCP_FILENAME }}"
 
-          SOL_ABS_DIR="${{ env.SOLUTION_ABS_DIR }}"
-          SLCP="${{ env.SLCP_FILENAME }}"
+          # Common vars and directories
+          SOL_ABS_DIR_CMAKE="${{ env.SOLUTION_ABS_DIR }}/${PROJECT_NAME}_cmake"
+          mkdir -p "${{env.POST_BUILD_ARTIFACTS_ABS_DIR}}"
 
           # 1) Default project (no --with / --configuration)
-          DEFAULT_PROJECT_ABS_DIR="${SOL_ABS_DIR}/${PROJECT_NAME}_default"
-          echo "Generating DEFAULT build config into: ${DEFAULT_PROJECT_ABS_DIR}"
-          mkdir -p "${DEFAULT_PROJECT_ABS_DIR}"
-          pushd "${SOL_ABS_DIR}" >/dev/null
-            slc generate "${SLCP}" -cpsdk -tlcn gcc -o cmake -d "${DEFAULT_PROJECT_ABS_DIR}"
+          DEFAULT_PROJECT_ARTIFACTS_ABS_DIR="${{ env.SOLUTION_ABS_DIR }}/${PROJECT_NAME}_default_artifacts"
+          DEFAULT_PROJECT_ARTIFACTS_ABS_FILE_DEST="${{ env.POST_BUILD_ARTIFACTS_ABS_DIR }}/${PROJECT_NAME}_default_artifacts.zip"
+          echo "Generating DEFAULT build config Artifacts into: ${DEFAULT_PROJECT_ARTIFACTS_ABS_DIR}"
+          mkdir -p "${DEFAULT_PROJECT_ARTIFACTS_ABS_DIR}"
+          pushd "${{ env.SOLUTION_ABS_DIR }}" >/dev/null
+            # Delete existing cmake directory if any
+            rm -rf "${SOL_ABS_DIR_CMAKE}"
+            # Generate new cmake files
+            slc generate "${{ env.SLCP_FILENAME }}" -cpsdk -tlcn gcc -o cmake
             echo "=== Building ${PROJECT_NAME}_default ==="
-            pushd "${DEFAULT_PROJECT_ABS_DIR}" >/dev/null
+            pushd "${SOL_ABS_DIR_CMAKE}" >/dev/null
+              # Build the project
               cmake --workflow --preset project --fresh
+              # Create size report
+              arm-none-eabi-size "${SOL_ABS_DIR_CMAKE}/build/default_config/${{ env.PROJECT_NAME }}.out" -A >> "${SOL_ABS_DIR_CMAKE}/build/default_config/${{ env.PROJECT_NAME }}_SizeReport.log"
+              # Copy artifacts into the project's artifacts directory
+              cp -a "${SOL_ABS_DIR_CMAKE}/build/default_config/." "${DEFAULT_PROJECT_ARTIFACTS_ABS_DIR}"
+              # Zip artifacts for release upload
+              zip -q -r "${DEFAULT_PROJECT_ARTIFACTS_ABS_FILE_DEST}" "${DEFAULT_PROJECT_ARTIFACTS_ABS_DIR}"
             popd >/dev/null
           popd >/dev/null
 
@@ -342,72 +357,13 @@ jobs:
             echo "No extra targets. Only default will be built."
           fi
 
-
-      # # Build Project
-      # - name: Build Project
+      # TODO regression, as expected projects now can have an slpb with no artifacts folder. Needs rework
+      # Will prevent bootloader builds
+      # # Add slpb artifacts to Release - If applicable, I do not like using artifact and would have preferred using the paths from slpb instead
+      # - name: Looking for postbuild artifacts and zipping them if present 
+      #   if: ${{ hashFiles(format('{0}/{1}.slpb', env.SOLUTION_ABS_DIR, env.PROJECT_NAME)) != '' }}
       #   run: |
-      #     cd ${{ env.CMAKE_WORKING_ABS_DIR }}
-      #     cmake --workflow --preset project --fresh
-      - name: Build all generated projects
-        shell: bash
-        run: |
-          set -euo pipefail
-          : "${PROJECT_NAME:?PROJECT_NAME must be set}"
-
-          for PROJ in "${PROJECT_NAME}"_*; do
-            [ -d "$PROJ" ] || continue
-            echo "=== Building $PROJ ==="
-            if [ ! -f "$PROJ/CMakePresets.json" ]; then
-              echo "::error::Expected $PROJ/CMakePresets.json not found in $PROJ"
-              exit 1
-            fi
-            cd "$PROJ"
-            cmake --workflow --preset project --fresh
-            cd ..
-          done
-
-
-      # # Create size report
-      # - name: Create size report
-      #   run: |
-      #     arm-none-eabi-size ${{ env.BINARIES_OUTPUT_ABS_DIR }}/${{ env.PROJECT_NAME }}.out -A >> ${{ env.PROJECT_NAME }}_SizeReport.log
-
-      - name: Create size logs for all projects
-        shell: bash
-        run: |
-          set -euo pipefail
-          : "${PROJECT_NAME:?PROJECT_NAME must be set}"
-
-          mkdir -p size_logs
-          shopt -s nullglob
-          found_any=0
-
-          for PROJ in "${PROJECT_NAME}"_*; do
-            [ -d "$PROJ" ] || continue
-            # try to find one (or more) .elf under the project directory
-            mapfile -t ELFS < <(find "$PROJ" -type f -name '*.elf' -maxdepth 4 2>/dev/null || true)
-            if [ "${#ELFS[@]}" -eq 0 ]; then
-              echo "No .elf found for $PROJ (build may place artifacts elsewhere)."
-              continue
-            fi
-            for elf in "${ELFS[@]}"; do
-              base="$(basename "$elf" .elf)"
-              log="size_logs/${PROJ}__${base}.txt"
-              echo "Size for $elf → $log"
-              arm-none-eabi-size "$elf" | tee "$log"
-              found_any=1
-            done
-          done
-
-          if [ "$found_any" -eq 0 ]; then
-            echo "Warning: no .elf files found to size."
-          fi
-
-      # Add slpb artifacts to Release - If applicable, I do not like using artifact and would have preferred using the paths from slpb instead
-      - name: Looking for postbuild artifacts and zipping them if present 
-        if: ${{ hashFiles(format('{0}/{1}.slpb', env.SOLUTION_ABS_DIR, env.PROJECT_NAME)) != '' }}
-        run: |
-          zip -q -r ${{ env.POST_BUILD_ARTIFACTS_ABS_OUT_FILE }} ${{ env.POST_BUILD_ARTIFACTS_ABS_DIR }}
+      #     zip -q -r ${{ env.POST_BUILD_ARTIFACTS_ABS_OUT_FILE }} ${{ env.POST_BUILD_ARTIFACTS_ABS_DIR }}
 
       - name: Create Release Draft
         uses: release-drafter/release-drafter@v6
@@ -420,25 +376,24 @@ jobs:
           name: ${{ env.PROJECT_NAME }} v${{ env.RELEASE_VERSION }}
       
       - name: Upload Assets
-        uses: shogo82148/actions-upload-release-asset@v1
+        uses: shogo82148/actions-upload-release-asset@v1.8.2
         with:
           github_token: ${{ secrets.ACCESS_TOKEN }}
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           overwrite: true
           asset_path: | 
-            ${{ env.BINARIES_OUTPUT_ABS_DIR }}/${{ env.PROJECT_NAME }}.*
-            ${{ github.workspace }}/${{ env.PROJECT_NAME }}_SizeReport.log
+            ${{ env.POST_BUILD_ARTIFACTS_ABS_DIR }}/*.zip
 
-      # Add slpb artifacts to Release - If applicable, I do not like using artifact and would have preferred using the paths from slpb instead
-      - name: Upload postbuild artifacts if present
-        if: ${{ hashFiles(env.POST_BUILD_ARTIFACTS_ABS_OUT_FILE) != '' }}
-        uses: shogo82148/actions-upload-release-asset@v1
-        with:
-          github_token: ${{ secrets.ACCESS_TOKEN }}
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          overwrite: true
-          asset_path: | 
-            ${{ env.POST_BUILD_ARTIFACTS_ABS_OUT_FILE }}
+      # # Add slpb artifacts to Release - If applicable, I do not like using artifact and would have preferred using the paths from slpb instead
+      # - name: Upload postbuild artifacts if present
+      #   if: ${{ hashFiles(env.POST_BUILD_ARTIFACTS_ABS_OUT_FILE) != '' }}
+      #   uses: shogo82148/actions-upload-release-asset@v1.8.2
+      #   with:
+      #     github_token: ${{ secrets.ACCESS_TOKEN }}
+      #     upload_url: ${{ steps.create_release.outputs.upload_url }}
+      #     overwrite: true
+      #     asset_path: | 
+      #       ${{ env.POST_BUILD_ARTIFACTS_ABS_OUT_FILE }}
 
   # update_changelog:
   #   name: Update Changelog
