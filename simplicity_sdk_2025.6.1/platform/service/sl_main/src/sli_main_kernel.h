@@ -1,6 +1,6 @@
 /***************************************************************************//**
  * @file
- * @brief Main process action.
+ * @brief Main - Kernel Start Task Functions (Internal)
  *******************************************************************************
  * # License
  * <b>Copyright 2025 Silicon Laboratories Inc. www.silabs.com</b>
@@ -27,22 +27,31 @@
  * 3. This notice may not be removed or altered from any source distribution.
  *
  ******************************************************************************/
-#include "sl_event_handler.h"
+#ifndef _SLI_MAIN_KERNEL_H
+#define _SLI_MAIN_KERNEL_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /******************************************************************************
- * @brief Action(s) to perform periodically from the main loop.
+ * @brief Start task allocation function.
  *
- * @note (1) For baremetal applications, this function is called from the main function
- *           in an infinite loop.
- *
- * @note (2) For RTOS applications, after configuring the start task to continue
- *           executing, this function is called from the main function in an infinite
- *           loop.
+ * @details Stack and Task Control block are allocated by the memory manager
+ *          as long term / short term allocation depending on the user selected
+ *          configuration.
  *****************************************************************************/
-void sl_main_process_action(void)
-{
-  sli_platform_process_action();
-  sli_service_process_action();
-  sli_stack_process_action();
-  sli_internal_app_process_action();
+void sli_main_allocate_start_task_memory(void);
+
+/******************************************************************************
+ * @brief Initialize the start task.
+ *
+ * @details This function initializes the start task with the highest priority.
+ *****************************************************************************/
+void sli_main_kernel_start_task_initialize(void);
+
+#ifdef __cplusplus
 }
+#endif
+
+#endif // _SLI_MAIN_KERNEL_H

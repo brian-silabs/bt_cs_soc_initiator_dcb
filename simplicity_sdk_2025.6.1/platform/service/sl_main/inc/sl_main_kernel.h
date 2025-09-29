@@ -1,17 +1,9 @@
 /***************************************************************************//**
  * @file
- * @brief Timer service internal header
- *
- * Timer service for applications with less strict timing requirements.
- * This module is based on the sleeptimer, but runs the timer callbacks in
- * non-interrupt context. This behavior gives more flexibility for the callback
- * implementation but causes a less precise timing.
- *
- * @note If your application requires precise timing, please use the sleeptimer
- *       directly.
+ * @brief Main - Kernel Start Task Functions
  *******************************************************************************
  * # License
- * <b>Copyright 2024 Silicon Laboratories Inc. www.silabs.com</b>
+ * <b>Copyright 2025 Silicon Laboratories Inc. www.silabs.com</b>
  *******************************************************************************
  *
  * SPDX-License-Identifier: Zlib
@@ -35,30 +27,39 @@
  * 3. This notice may not be removed or altered from any source distribution.
  *
  ******************************************************************************/
-#ifndef APP_TIMER_INTERNAL_H
-#define APP_TIMER_INTERNAL_H
+#ifndef _SL_MAIN_KERNEL_H
+#define _SL_MAIN_KERNEL_H
 
 #include <stdbool.h>
-#include "sl_power_manager.h"
 
 /***************************************************************************//**
- * Execute timer callback functions.
- *
+ * @addtogroup sl_main System Setup (sl_main)
+ * @{
  ******************************************************************************/
-void sli_app_timer_step(void);
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /***************************************************************************//**
- * Routine for power manager handler
- *
- * @return SL_POWER_MANAGER_WAKEUP if there is an unhandled timer event
+ * @brief Start the kernel.
  ******************************************************************************/
-sl_power_manager_on_isr_exit_t sli_app_timer_sleep_on_isr_exit(void);
+void sl_main_kernel_start(void);
 
 /***************************************************************************//**
- * Checks if it is ok to sleep now
+ * @brief User-defined function to determine if the start task should continue.
  *
- * @return false if there is an unhandled timer event
+ * @return  true if the start task should continue, false otherwise.
+ *
+ * @note By default the start task should not continue, but this function can be
+ *       re-implemented to force the start task to continue running.
  ******************************************************************************/
-bool sli_app_timer_is_ok_to_sleep(void);
+bool sl_main_start_task_should_continue(void);
 
-#endif // APP_TIMER_INTERNAL_H
+#ifdef __cplusplus
+}
+#endif
+
+/** @} (end addtogroup sl_main) */
+
+#endif // _SL_MAIN_KERNEL_H

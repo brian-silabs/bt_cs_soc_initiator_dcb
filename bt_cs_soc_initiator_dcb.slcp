@@ -51,6 +51,7 @@ component:
 - {id: cs_initiator}
 - {id: cs_initiator_display}
 - {id: device_init}
+- {id: freertos}
 - {id: gatt_configuration}
 - {id: hal_prs}
 - {id: in_place_ota_dfu}

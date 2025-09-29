@@ -1,4 +1,5 @@
 #CRC Codes for initially generated config files -- do not modify!
+FreeRTOSConfig.h=548155582
 SEGGER_RTT_Conf.h=89856727
 app_assert_config.h=-1883827836
 app_config.h=1996383140
@@ -25,6 +26,8 @@ sl_bluetooth_cs_config.h=-1473917724
 sl_board_control_config.h=-1920186086
 sl_bt_host_adaptation_config.h=-1571664154
 sl_bt_in_place_ota_dfu_config.h=849298458
+sl_bt_rtos_config.h=945845940
+sl_bt_rtos_config_s2.h=-418588248
 sl_btctrl_anchor_selection_config.h=594869468
 sl_btctrl_config.h=-1402830116
 sl_btctrl_scheduler_priority_config.h=-183428656
@@ -36,6 +39,7 @@ sl_device_init_dcdc_config.h=467347643
 sl_hfxo_manager_config.h=511487363
 sl_iostream_eusart_vcom_config.h=664387004
 sl_iostream_swo_config.h=748883309
+sl_main_start_task_config.h=251875913
 sl_mbedtls_config.h=-187183866
 sl_mbedtls_device_config.h=-1083250924
 sl_memory_manager_config.h=-209387538

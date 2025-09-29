@@ -38,9 +38,15 @@
 #ifndef APP_TIMER_TYPES_H
 #define APP_TIMER_TYPES_H
 
-#include <stdint.h>
 #include <stdbool.h>
-#include "sl_sleeptimer.h"
+#include <stdint.h>
+#include "FreeRTOS.h"
+#include "timers.h"
+#include "FreeRTOSConfig.h"
+
+#if !(defined(configSUPPORT_DYNAMIC_ALLOCATION) && configSUPPORT_DYNAMIC_ALLOCATION == 1)
+#error "Please enable dynamic memory allocation in FreeRTOSConfig.h"
+#endif // defined(configSUPPORT_DYNAMIC_ALLOCATION) && configSUPPORT_DYNAMIC_ALLOCATION == 1
 
 // Forward declaration
 typedef struct app_timer app_timer_t;
@@ -56,15 +62,11 @@ typedef void (*app_timer_callback_t)(app_timer_t *timer, void *data);
 
 /// Timer structure
 struct app_timer {
-  sl_sleeptimer_timer_handle_t sleeptimer_handle;
+  TimerHandle_t handle;
   app_timer_callback_t callback;
   void *callback_data;
   app_timer_t *next;
-  bool triggered;
   bool periodic;
-  uint32_t timeout_ms;
-  uint16_t overflow_counter;
-  uint16_t overflow_max;
 };
 
 #endif // APP_TIMER_TYPES_H

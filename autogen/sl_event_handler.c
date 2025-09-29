@@ -9,9 +9,9 @@
 #include "sl_rail_util_power_manager_init.h"
 #include "btl_interface.h"
 #include "app_log.h"
-#include "app_timer_internal.h"
 #include "ble_peer_manager_central.h"
 #include "ble_peer_manager_filter.h"
+#include "sl_bt_rtos_adaptation.h"
 #include "sl_bluetooth.h"
 #include "cs_initiator.h"
 #include "cs_ras_client_internal.h"
@@ -27,6 +27,7 @@
 #include "sli_protocol_crypto.h"
 #include "sli_crypto.h"
 #include "sl_iostream_init_instances.h"
+#include "cmsis_os2.h"
 #include "nvm3_default.h"
 #include "sl_cos.h"
 #include "sl_iostream_handles.h"
@@ -58,6 +59,12 @@ void sl_platform_init(void)
 
 void sli_internal_init_early(void)
 {
+}
+
+void sl_kernel_start(void)
+{
+  sli_bt_rtos_adaptation_kernel_start();
+  osKernelStart();
 }
 
 void sl_driver_init(void)
@@ -100,24 +107,6 @@ void sl_internal_app_init(void)
   ble_peer_manager_filter_init();
   cs_initiator_init();
   cs_ras_client_init();
-}
-
-void sli_platform_process_action(void)
-{
-}
-
-void sli_service_process_action(void)
-{
-  sli_app_timer_step();
-}
-
-void sli_stack_process_action(void)
-{
-  sl_bt_step();
-}
-
-void sli_internal_app_process_action(void)
-{
 }
 
 void sl_iostream_init_instances_stage_1(void)

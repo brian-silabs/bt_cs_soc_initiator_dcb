@@ -1,9 +1,9 @@
 /***************************************************************************//**
  * @file
- * @brief Main process action.
+ * @brief CMSIS OS2 Common
  *******************************************************************************
  * # License
- * <b>Copyright 2025 Silicon Laboratories Inc. www.silabs.com</b>
+ * <b>Copyright 2024 Silicon Laboratories Inc. www.silabs.com</b>
  *******************************************************************************
  *
  * SPDX-License-Identifier: Zlib
@@ -27,34 +27,35 @@
  * 3. This notice may not be removed or altered from any source distribution.
  *
  ******************************************************************************/
-#ifndef _SL_MAIN_PROCESS_ACTION_H
-#define _SL_MAIN_PROCESS_ACTION_H
+
+#include <stddef.h>
+#include "sl_assert.h"
+#include "sl_status.h"
+#include "cmsis_os2.h"
 
 /***************************************************************************//**
- * @addtogroup sl_main System Setup (sl_main)
- * @{
+ * Convert OsStatus from CMSIS-RTOS2 to sl_status type.
  ******************************************************************************/
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-/******************************************************************************
- * @brief Actions to perform periodically from the main loop.
- *
- * @note (1) For baremetal applications, this function is called from the main function
- *           in an infinite loop.
- *
- * @note (2) For RTOS applications, after configuring the start task to continue
- *           executing, this function is called from the main function in an infinite
- *           loop.
- *****************************************************************************/
-void sl_main_process_action(void);
-
-#ifdef __cplusplus
+sl_status_t sl_cmsis_os_convert_status(osStatus_t os_status)
+{
+  switch (os_status) {
+    case osOK:
+      return SL_STATUS_OK;
+    case osError:
+      return SL_STATUS_FAIL;
+    case osErrorTimeout:
+      return SL_STATUS_TIMEOUT;
+    case osErrorResource:
+      return SL_STATUS_NOT_AVAILABLE;
+    case osErrorParameter:
+      return SL_STATUS_INVALID_PARAMETER;
+    case osErrorNoMemory:
+      return SL_STATUS_NO_MORE_RESOURCE;
+    case osErrorISR:
+      return SL_STATUS_ISR;
+    case osStatusReserved:
+    default:
+      EFM_ASSERT(0);
+      return SL_STATUS_FAIL;
+  }
 }
-#endif
-
-/** @} (end addtogroup sl_main) */
-
-#endif // _SL_MAIN_PROCESS_ACTION_H
